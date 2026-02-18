@@ -1,63 +1,84 @@
 import streamlit as st
 import pandas as pd
-import os
 
-# CONFIGURACIÓN DE PÁGINA "ESTILO GAMER"
-st.set_page_config(
-    page_title="Elden Ring Ultimate Tracker",
-    page_icon="⚔️",
-    layout="wide"
-)
+# CONFIGURACIÓN DE PÁGINA
+st.set_page_config(page_title="Elden Ring Checklist", layout="centered")
 
-# CSS PERSONALIZADO (Diseño Dark Gold)
+# DISEÑO MÓVIL (DARK GOLD)
 st.markdown("""
     <style>
-    .main { background-color: #0b0b0b; color: #d4af37; }
-    .stCheckbox { background-color: #1a1a1a; padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 10px; transition: 0.3s; }
-    .stCheckbox:hover { border: 1px solid #d4af37; background-color: #252525; }
-    h1, h2, h3 { color: #c19a6b !important; font-family: 'Georgia', serif; }
+    .main { background-color: #0f0f0f; color: #d4af37; }
+    .stCheckbox { 
+        background-color: #1a1a1a; 
+        padding: 15px; 
+        border-radius: 10px; 
+        border: 1px solid #333; 
+        margin-bottom: 8px; 
+    }
     .stProgress > div > div > div > div { background-color: #d4af37; }
+    h1, h2, h3 { color: #c19a6b !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # CARGA DE DATOS
 @st.cache_data
 def load_data():
+    # Asegúrate de que este nombre coincida con tu archivo en GitHub
     return pd.read_csv('guia_rapida.csv')
 
 df = load_data()
 
-# HEADER PROFESIONAL
-st.title("⚔️ ELDEN RING CHECKLIST")
-st.markdown("---")
+# INICIALIZAR ESTADO DE CHECKS
+if 'checks' not in st.session_state:
+    st.session_state.checks = {}
 
-# BARRA DE PROGRESO CON ESTILO
-col_prog, col_stats = st.columns([2, 1])
-with col_prog:
-    total = len(df)
-    # Aquí el progreso se guardará en la sesión del navegador
-    if 'checks' not in st.session_state: st.session_state.checks = {}
-    hechos = sum(st.session_state.checks.values())
-    st.write(f"### Tu Senda hacia el Trono: {int((hechos/total)*100)}%")
-    st.progress(hechos/total)
+# --- TÍTULO Y BARRA DE PROGRESO ---
+st.title("⚔️ Elden Ring Checklist")
 
-# FILTROS LATERALES
-st.sidebar.header("🗺️ MAPA DE GRACIA")
-region = st.sidebar.selectbox("Región", sorted(df['Región'].unique()))
-categoria = st.sidebar.radio("Categoría", sorted(df['Categoría'].unique()))
+# Calcular progreso
+total_items = len(df)
+items_completados = sum(st.session_state.checks.values())
+porcentaje = items_completados / total_items if total_items > 0 else 0
 
-# VISTA DE CONTENIDO ROBUSTO
-df_view = df[(df['Región'] == region) & (df['Categoría'] == categoria)]
+st.write(f"**Progreso Total:** {int(porcentaje*100)}% ({items_completados}/{total_items})")
+st.progress(porcentaje)
 
-st.subheader(f"📍 {region} - {categoria}")
+# --- FILTROS ---
+regiones = sorted(df['Región'].unique())
+region_sel = st.selectbox("🌍 Selecciona Región", ["-- Elige una --"] + regiones)
 
-for idx, row in df_view.iterrows():
-    with st.container():
-        col1, col2 = st.columns([0.1, 0.9])
-        with col1:
-            st.session_state.checks[idx] = st.checkbox("", key=f"check_{idx}")
-        with col2:
-            st.markdown(f"### {row['Nombre']}")
-            st.write(f"**Descripción/Ubicación:** {row['Ubicación / Detalle / Acción']}")
+if region_sel != "-- Elige una --":
+    df_reg = df[df['Región'] == region_sel]
+    
+    # CONTADORES EN CATEGORÍAS
+    # Contamos cuántos elementos hay de cada categoría en la región elegida
+    counts = df_reg['Categoría'].value_counts()
+    opciones_cat = [f"{cat} ({counts[cat]})" for cat in counts.index]
+    
+    cat_sel_raw = st.selectbox("🏷️ Categoría", ["-- Elige una --"] + opciones_cat)
+    
+    if cat_sel_raw != "-- Elige una --":
+        # Extraer el nombre de la categoría ignorando el número entre paréntesis
+        cat_sel = cat_sel_raw.split(" (")[0]
+        df_final = df_reg[df_reg['Categoría'] == cat_sel]
+        
+        st.markdown(f"### {cat_sel}")
+        
+        # MOSTRAR ELEMENTOS
+        for idx, row in df_final.iterrows():
+            # Crear clave única para el checkbox
+            key = f"item_{idx}"
+            
+            # Dibujar checkbox y actualizar estado
+            st.session_state.checks[idx] = st.checkbox(
+                row['Nombre'], 
+                value=st.session_state.checks.get(idx, False),
+                key=key
+            )
+            
+            with st.expander("📍 Ver ubicación/nota"):
+                st.write(row['Ubicación / Detalle / Acción'])
+else:
+    st.info("Selecciona una región para ver tu progreso.")
             # Aquí puedes agregar más columnas si decides robustecer el CSV
             st.markdown("---")
