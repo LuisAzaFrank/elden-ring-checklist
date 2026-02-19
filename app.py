@@ -1,73 +1,59 @@
 import streamlit as st
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
-# CONFIGURACIÓN DE PÁGINA
-st.set_page_config(page_title="Elden Ring Checklist", layout="centered")
+# CONFIGURACIÓN PRO
+st.set_page_config(page_title="Elden Ring Pro Checklist", layout="centered")
 
-# ESTILO OSCURO Y DORADO (Muy Elden Ring)
-st.markdown("""
-    <style>
-    .main { background-color: #0f0f0f; color: #d4af37; }
-    .stCheckbox { background-color: #1a1a1a; padding: 12px; border-radius: 10px; border: 1px solid #333; margin-bottom: 5px; }
-    .stProgress > div > div > div > div { background-color: #c19a6b; }
-    h1, h2, h3 { color: #c19a6b !important; }
-    </style>
-    """, unsafe_allow_html=True)
+# ESTILO
+st.markdown("<style>.stCheckbox { background-color: #1a1a1a; padding: 10px; border-radius: 8px; }</style>", unsafe_allow_html=True)
 
-# CARGA DE DATOS
+# 1. CONEXIÓN A LA NUBE
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Cargar base de datos local y progreso de la nube
 @st.cache_data
-def load_data():
+def load_base_data():
     return pd.read_csv('guia_rapida.csv')
 
-df = load_data()
+df_fijo = load_base_data()
+df_progreso = conn.read(ttl=0) # ttl=0 para que siempre lea lo más nuevo
 
-# INICIALIZAR EL PROGRESO EN LA SESIÓN
-if 'completados' not in st.session_state:
-    st.session_state.completados = set()
-
-# --- TÍTULO Y BARRA DE PROGRESO ---
 st.title("⚔️ Elden Ring Checklist")
 
-total_puntos = len(df)
-hechos = len(st.session_state.completados)
-porcentaje = hechos / total_puntos if total_puntos > 0 else 0
+# 2. CÁLCULO DE PROGRESO REAL
+total = len(df_fijo)
+# Si la hoja está vacía, creamos un set vacío
+hechos_ids = set(df_progreso['ID'].astype(str)) if not df_progreso.empty else set()
+porcentaje = len(hechos_ids) / total
 
-st.write(f"**Tu Progreso:** {int(porcentaje*100)}% ({hechos}/{total_puntos})")
+st.metric("Progreso Guardado", f"{int(porcentaje*100)}%", f"{len(hechos_ids)} de {total}")
 st.progress(porcentaje)
 
-# --- FILTROS ---
-regiones = sorted(df['Región'].unique())
-reg_sel = st.selectbox("🌍 Región", ["-- Elige una --"] + regiones)
+# 3. FILTROS
+reg_sel = st.selectbox("🌍 Región", sorted(df_fijo['Región'].unique()))
+df_view = df_fijo[df_fijo['Región'] == reg_sel]
 
-if reg_sel != "-- Elige una --":
-    df_reg = df[df['Región'] == reg_sel]
+# 4. LISTADO CON GUARDADO
+with st.form("planilla_progreso"):
+    st.write(f"### {reg_sel}")
+    check_status = {}
     
-    # CONTADORES DINÁMICOS
-    # Esto cuenta cuántas cosas hay de cada categoría SOLO en la región elegida
-    conteos = df_reg['Categoría'].value_counts()
-    cat_opciones = [f"{cat} ({conteos[cat]})" for cat in conteos.index]
-    
-    cat_sel_raw = st.selectbox("🏷️ Categoría", ["-- Elige una --"] + cat_opciones)
-    
-    if cat_sel_raw != "-- Elige una --":
-        # Extraemos el nombre real de la categoría (quitando el número)
-        cat_real = cat_sel_raw.split(" (")[0]
-        df_final = df_reg[df_reg['Categoría'] == cat_real]
+    for idx, row in df_view.iterrows():
+        # Verificamos si ya está marcado en la nube
+        ya_hecho = str(idx) in hechos_ids
+        check_status[idx] = st.checkbox(row['Nombre'], value=ya_hecho, key=f"c_{idx}")
         
-        st.write(f"### {cat_real}")
+    if st.form_submit_button("💾 GUARDAR CAMBIOS EN LA NUBE"):
+        # Creamos el nuevo DataFrame de progreso
+        nuevos_datos = []
+        for id_obj, valor in check_status.items():
+            if valor:
+                # Solo guardamos los que están marcados para ahorrar espacio
+                nuevos_datos.append({"ID": str(id_obj), "Nombre": df_fijo.loc[id_obj, 'Nombre'], "Completado": True})
         
-        # LISTADO DE ITEMS
-        for idx, row in df_final.iterrows():
-            key = f"check_{idx}"
-            # Al marcar, se guarda en la memoria de la sesión
-            is_checked = st.checkbox(row['Nombre'], key=key, value=(idx in st.session_state.completados))
-            
-            if is_checked:
-                st.session_state.completados.add(idx)
-            else:
-                st.session_state.completados.discard(idx)
-            
-            with st.expander("📍 Ubicación y Detalles"):
-                st.write(row['Ubicación / Detalle / Acción'])
-else:
-    st.info("Explora las tierras intermedias seleccionando una región.")
+        # Actualizamos Google Sheets
+        df_update = pd.DataFrame(nuevos_datos)
+        conn.update(data=df_update)
+        st.success("¡Progreso tatuado en la nube con éxito!")
+        st.rerun()
